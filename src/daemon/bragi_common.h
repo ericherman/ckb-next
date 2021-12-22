@@ -28,4 +28,5 @@ static inline int _bragi_check_success(const uchar* out, const uchar* in, int de
 
 size_t bragi_calculate_buffer_size(usbdevice* kb, uint32_t data_len);
 int bragi_write_to_handle(usbdevice* kb, uchar* pkt, uchar handle, size_t buf_len, uint32_t data_len);
+void bragi_update_dongle_subdevs(usbdevice* kb, int prop);
 #endif

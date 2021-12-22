@@ -99,3 +99,84 @@ static inline int bragi_write_to_handle_common(usbdevice* kb, uchar* pkt, uchar 
 int bragi_write_to_handle(usbdevice* kb, uchar* pkt, uchar handle, size_t buf_len, uint32_t data_len){
     return bragi_write_to_handle_common(kb, pkt, handle, buf_len, data_len, 7);
 }
+
+void bragi_update_dongle_subdevs(usbdevice* kb, int prop){
+    // We don't want any other threads messing with this while we're probing
+    // Do note that this also blocks USB IO
+    pthread_mutex_lock(cmutex(kb));
+
+    // First, check if any devices have been disconnected
+    for(int i = 1; i < 8; i++){
+        if((prop >> i) & 1)
+            continue;
+
+        if(!kb->children[i-1])
+            continue;
+
+        // Disconnect the device
+        usbdevice* subkb = kb->children[i-1];
+        queued_mutex_lock(dmutex(subkb));
+        ckb_info("ckb%d: Bragi subdevice ckb%d disappeared", INDEX_OF(kb, keyboard), INDEX_OF(subkb, keyboard));
+        closeusb(subkb);
+        kb->children[i-1] = NULL;
+        queued_mutex_unlock(dmutex(subkb));
+    }
+
+    // Then, check if any new devices have been connected
+    for(int i = 1; i < 8; i++){
+        if(!((prop >> i) & 1))
+            continue;
+
+        // Skip this device if it's already been added
+        if(kb->children[i-1])
+            continue;
+
+        ckb_info("Found new bragi subdevice %d", i);
+
+        // Find a free device slot
+        for(int index = 1; index < DEV_MAX; index++){
+            usbdevice* subkb = keyboard + index;
+            if(queued_mutex_trylock(dmutex(subkb))){
+                // If the mutex is locked then the device is obviously in use, so keep going
+                continue;
+            }
+
+            // Ignore it if it has already been initialised
+            if(subkb->status > DEV_STATUS_DISCONNECTED){
+                queued_mutex_unlock(dmutex(subkb));
+                continue;
+            }
+
+            subkb->status = DEV_STATUS_CONNECTING;
+            subkb->fwversion = 1234; // invalid
+            subkb->parent = kb;
+
+            subkb->out_ep_packet_size = kb->out_ep_packet_size;
+
+            // Assign a mouse vtable for now, can be changed later after we get vid/pid
+            memcpy(&subkb->vtable, &vtable_bragi_mouse, sizeof(devcmd));
+
+            subkb->bragi_child_id = i;
+
+            // Add the device to our children array
+            //pthread_mutex_lock(cmutex(kb));
+            kb->children[i-1] = subkb;
+            // Must be unlocked as soon as possible, before we try to get any properties
+            pthread_mutex_unlock(cmutex(kb));
+
+            // Fill dev information
+            ushort vid = bragi_get_property(subkb, BRAGI_VID);
+            ushort pid = bragi_get_property(subkb, BRAGI_PID);
+
+            ckb_info("Subkb vendor: 0x%hx, product: 0x%hx", vid, pid);
+            subkb->vendor = vid;
+            subkb->product = pid;
+
+            setupusb(subkb);
+            // FIXME: We should not return here. Multiple connected devices on first dongle plug in will not be detected.
+            return;
+        }
+        ckb_err("No more free devices");
+    }
+    pthread_mutex_unlock(cmutex(kb));
+}

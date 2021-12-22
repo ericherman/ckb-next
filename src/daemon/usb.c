@@ -821,6 +821,7 @@ int _usbrecv(usbdevice* kb, void* out_msg, size_t msg_len, uchar* in_msg, const 
 int closeusb(usbdevice* kb){
     kb->status = DEV_STATUS_DISCONNECTING;
     queued_mutex_lock(imutex(kb));
+    // FIXME: bragi dongle suvdevs don't have a handle, but we still need them to enter the if block.
     if(kb->handle){
         int index = INDEX_OF(kb, keyboard);
         ckb_info("Disconnecting %s%d", devpath, index);
